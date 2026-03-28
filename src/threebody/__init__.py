@@ -2,6 +2,8 @@
 Three-body dynamics with a tension-adaptive symplectic leapfrog integrator.
 
 Core symbols import without matplotlib. Plotting and animation load matplotlib lazily.
+
+Public initial-condition helpers: ``chenciner_montgomery_figure8``, ``pythagorean_three_body``.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from threebody.core import (
     DEFAULT_TENSION_EMA_ALPHA,
     SimulationConfig,
     SimulationResult,
+    StepCallback,
     benchmark_figure8_ts_config,
     chenciner_montgomery_figure8,
     gravitational_acceleration,
@@ -24,6 +27,7 @@ __all__ = [
     "DEFAULT_TENSION_EMA_ALPHA",
     "SimulationConfig",
     "SimulationResult",
+    "StepCallback",
     "benchmark_figure8_ts_config",
     "chenciner_montgomery_figure8",
     "pythagorean_three_body",

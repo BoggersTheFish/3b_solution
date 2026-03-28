@@ -6,7 +6,7 @@
 
 **2. Tension.** After each accepted step, we form \(\tau\) from \(|E_{\mathrm{after}}-E_{\mathrm{before}}|/(|E|+\varepsilon)\) and \(\|\sum_i m_i \mathbf{a}_i\|/(\sum_i m_i\|\mathbf{a}_i\|+\varepsilon)\). Smoothed tension \(\tau_{\mathrm{smooth}} \leftarrow \alpha\tau + (1-\alpha)\tau_{\mathrm{smooth}}\) with **one primary knob** \(\alpha =\) `tension_ema_alpha` \(\in [0,1]\).
 
-**3. Forces.** Pairwise Newtonian gravity uses a **vectorized** \(O(N^2)\) kernel (broadcast reductions) for clarity and speed as \(N\) grows beyond three.
+**3. Forces.** Pairwise Newtonian gravity uses a **vectorized** \(O(N^2)\) kernel (`rij`, `dist2`, `inv_r3` with zeroed diagonal). Optional **`collision_avoidance`** bumps softening when \(\tau\) spikes. **`step_callback(t, τ, Δt, E)`** runs every step for external telemetry.
 
 **4. Figures.** This repository ships **trajectory plots**, **live energy and tension panels**, and a **figure-8 animation**—sufficient for a short arXiv-style note or blog post. **Suggested citation** (adapt as needed): point to the GitHub repository [BoggersTheFish/3b_solution](https://github.com/BoggersTheFish/3b_solution) and the `docs/METHODOLOGY.md` narrative for the GOAT-TS mapping.
 

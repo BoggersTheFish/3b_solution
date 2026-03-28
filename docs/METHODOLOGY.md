@@ -26,9 +26,13 @@ Lessons carried over from symplectic pendulum integrators and tension-adaptive e
 
 4. **Validate on a non-negotiable orbit** — The **Chenciner–Montgomery figure-8** anchors the design: shape, period scale, and energy drift must remain credible under the tension policy.
 
-5. **Vectorized forces** — Pairwise gravity and potential energy use **NumPy broadcasting** over the \(N \times N\) separation matrix (same \(O(N^2)\) complexity, better constant factor for \(N > 3\); optional SciPy `cdist` is a drop-in for distance only if you fork for larger \(N\)).
+5. **Vectorized forces** — Accelerations use **`rij = r[None,:,:] - r[:,None,:]`**, **`dist2`**, **`inv_r3`** with a zeroed diagonal (no SciPy required). Potential energy uses upper-triangular pairs.
 
-6. **Pythagorean stress test** — The **3:4:5** triangle mass ratio at rest (**`pythagorean_three_body`**, integrated to **`t = 50`** in `run_pythagorean_demo.py`) exposes repeated close approaches; tension-adaptive \(\Delta t\) is the “showcase” run compared to the calm figure-8 period.
+6. **Telemetry** — `run_simulation(..., step_callback=...)` invokes `(t, \tau_{\mathrm{smooth}}, \Delta t, E)` after **each** step for streaming to meta-optimizers.
+
+7. **Collision-style softening bump** — Optional `collision_avoidance`: if \(\tau\) exceeds `tension_high * collision_tension_multiplier`, increase **softening** toward `collision_softening_cap` to survive brutal close approaches without hand-tuning every orbit.
+
+8. **Pythagorean stress test** — The **3:4:5** triangle mass ratio at rest (**`pythagorean_three_body`**, integrated to **`t = 50`** in `run_pythagorean_demo.py`) exposes repeated close approaches; tension-adaptive \(\Delta t\) is the “showcase” run compared to the calm figure-8 period.
 
 ## Evolution narrative (meta-waves)
 
@@ -51,7 +55,7 @@ Lessons carried over from symplectic pendulum integrators and tension-adaptive e
 
 ## Future integration with GOAT-TS
 
-- Export **\(\tau(t)\)** and energy residuals as telemetry for meta-optimizers.
+- Use **`step_callback`** or stored **`SimulationResult`** series as telemetry for meta-optimizers.
 - Swap the force layer; keep the tension feedback shell.
 - Let symbolic nodes propose alternate \(\tau\) definitions or EMA schedules; this repo remains the executable ground truth.
 

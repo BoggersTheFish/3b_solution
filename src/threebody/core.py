@@ -19,7 +19,7 @@ proxy on **a**. High τ shrinks the next step; low τ allows growth within
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -29,6 +29,9 @@ Vec2 = NDArray[np.float64]  # shape (n_bodies, 2); typically n=3 in this repo
 
 # Single primary knob for tension smoothing (override per run via SimulationConfig.tension_ema_alpha).
 DEFAULT_TENSION_EMA_ALPHA: float = 0.35
+
+# Optional telemetry: called after each completed leapfrog step with (t, τ_smooth, dt_next, energy).
+StepCallback = Callable[[float, float, float, float], None]
 
 
 def gravitational_acceleration(
@@ -47,15 +50,15 @@ def gravitational_acceleration(
     """
     pos = np.asarray(positions, dtype=np.float64)
     m = np.asarray(masses, dtype=np.float64)
-    n = pos.shape[0]
     g = float(gravitational_constant)
     eps2 = float(softening) ** 2
-    # diff[i, j] = r_j - r_i
-    diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]
-    dist2 = np.sum(diff**2, axis=2) + eps2
-    np.fill_diagonal(dist2, np.inf)
-    inv_r3 = dist2 ** (-1.5)
-    return g * np.sum(m[np.newaxis, :, np.newaxis] * diff * inv_r3[:, :, np.newaxis], axis=1)
+    # rij[i, j] = r_j - r_i ; zero diagonal on inv_r3 removes self terms (pure NumPy).
+    rij = pos[None, :, :] - pos[:, None, :]
+    dist2 = np.sum(rij**2, axis=-1) + eps2
+    np.fill_diagonal(dist2, 1.0)  # avoid 0**(-3/2) on diagonal; self terms zeroed next
+    inv_r3 = dist2 ** -1.5
+    np.fill_diagonal(inv_r3, 0.0)
+    return g * np.sum(m[None, :, None] * rij * inv_r3[:, :, None], axis=1)
 
 
 def total_energy(
@@ -214,10 +217,15 @@ class SimulationConfig:
     shrink_factor: float = 0.62
     grow_factor: float = 1.03
     # τ_smooth ← α·τ_raw + (1−α)·τ_smooth_prev ; α=1 disables smoothing.
-    tension_ema_alpha: float = 0.35
+    tension_ema_alpha: float = DEFAULT_TENSION_EMA_ALPHA
     w_energy: float = 1.0
     w_force: float = 0.5
     max_steps: int = 5_000_000
+    # If True, increase softening when τ_smooth spikes (close-approach / numerical stress).
+    collision_avoidance: bool = False
+    collision_tension_multiplier: float = 2.0
+    collision_softening_grow: float = 1.15
+    collision_softening_cap: float = 0.01
 
 
 @dataclass
@@ -240,19 +248,24 @@ def run_simulation(
     config: SimulationConfig,
     *,
     store_stride: int = 1,
+    step_callback: StepCallback | None = None,
 ) -> SimulationResult:
     """
-    Integrate the 3-body problem with tension-adaptive kick–drift–kick leapfrog.
+    Integrate the N-body problem with tension-adaptive kick–drift–kick leapfrog.
 
     At each accepted step, tension is computed from the energy jump across the step
     and the acceleration field; Δt is adjusted before the next step.
+
+    If ``step_callback`` is set, it is invoked after **each** completed step with
+    ``(t, tau_smooth, dt, energy)`` where ``dt`` is the **next** step size (after
+    adaptation), suitable for streaming into a meta-optimizer.
     """
     pos = np.array(positions0, dtype=np.float64, copy=True)
     vel = np.array(velocities0, dtype=np.float64, copy=True)
     masses = np.asarray(masses, dtype=np.float64)
 
     g = config.gravitational_constant
-    eps = config.softening
+    eps_current = float(config.softening)
 
     dt = float(np.clip(config.dt_initial, config.dt_min, config.dt_max))
 
@@ -262,8 +275,8 @@ def run_simulation(
     tension_list: list[float] = []
     dt_list: list[float] = []
 
-    acc = gravitational_acceleration(pos, masses, g, eps)
-    e0 = total_energy(pos, vel, masses, g, eps)
+    acc = gravitational_acceleration(pos, masses, g, eps_current)
+    e0 = total_energy(pos, vel, masses, g, eps_current)
     energy_list.append(e0)
     tension_list.append(0.0)
     dt_list.append(dt)
@@ -293,21 +306,21 @@ def run_simulation(
         if dt_step > remaining:
             dt_step = remaining
 
-        e_before = total_energy(pos, vel, masses, g, eps)
+        e_before = total_energy(pos, vel, masses, g, eps_current)
 
         # Kick half
         vel_half = vel + 0.5 * dt_step * acc
         # Drift
         pos = pos + dt_step * vel_half
         # New acceleration and kick half
-        acc_new = gravitational_acceleration(pos, masses, g, eps)
+        acc_new = gravitational_acceleration(pos, masses, g, eps_current)
         vel = vel_half + 0.5 * dt_step * acc_new
         acc = acc_new
 
         t += dt_step
         step += 1
 
-        e_after = total_energy(pos, vel, masses, g, eps)
+        e_after = total_energy(pos, vel, masses, g, eps_current)
         tau_raw = compute_tension(
             e_before,
             e_after,
@@ -321,12 +334,24 @@ def run_simulation(
         else:
             tau_smooth = ema_clip * tau_raw + (1.0 - ema_clip) * tau_smooth
 
+        if config.collision_avoidance and (
+            tau_smooth > config.tension_high * config.collision_tension_multiplier
+        ):
+            eps_current = min(
+                eps_current * config.collision_softening_grow,
+                config.collision_softening_cap,
+            )
+            eps_current = max(eps_current, float(config.softening))
+
         # Adapt next Δt from smoothed tension (reduces Δt chatter vs raw τ).
         if tau_smooth > config.tension_high:
             dt *= config.shrink_factor
         elif tau_smooth < config.tension_low:
             dt *= config.grow_factor
         dt = float(np.clip(dt, config.dt_min, config.dt_max))
+
+        if step_callback is not None:
+            step_callback(t, tau_smooth, dt, e_after)
 
         stride_counter += 1
         if stride_counter % store_stride == 0:
@@ -340,7 +365,7 @@ def run_simulation(
     if abs(times_list[-1] - t) > 1e-14 and step > 0:
         times_list.append(t)
         pos_snapshots.append(pos.copy())
-        energy_list.append(float(total_energy(pos, vel, masses, g, eps)))
+        energy_list.append(float(total_energy(pos, vel, masses, g, eps_current)))
         tension_list.append(tau_smooth)
         dt_list.append(dt)
 

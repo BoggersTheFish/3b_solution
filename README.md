@@ -4,7 +4,20 @@
 
 *Nodes* = bodies + integrator stages; *edges* = gravitational constraints; *waves* = time steps; *tension* = energy drift + force imbalance; *break/evolve* = adaptive \(\Delta t\) from smoothed \(\tau\).
 
-**Dependencies:** **NumPy + Matplotlib only** in this repo — no SciPy/JAX — so physics and policy stay transparent and easy to embed in GOAT-TS pipelines. Pairwise gravity is **vectorized** (broadcast \(O(N^2)\) accelerations); for \(N \gg 3\) you could also plug in `scipy.spatial.distance` in a fork — not required here.
+**Dependencies:** **NumPy + Matplotlib only** in this repo — no SciPy/JAX — so physics and policy stay transparent and easy to embed in GOAT-TS pipelines. Pairwise gravity is **vectorized** with broadcasting (same \(O(N^2)\) scaling, strong constant factor on small \(N\)); the acceleration kernel is a few lines:
+
+```python
+rij = positions[None, :, :] - positions[:, None, :]
+dist2 = np.sum(rij**2, axis=-1) + eps2
+np.fill_diagonal(dist2, 1.0)  # avoid singular diagonal before inv_r3
+inv_r3 = dist2 ** -1.5
+np.fill_diagonal(inv_r3, 0.0)
+acc = np.sum(masses[None, :, None] * rij * inv_r3[:, :, None], axis=1) * G  # G = gravitational_constant
+```
+
+Optional **`collision_avoidance`** in `SimulationConfig`: when smoothed \(\tau\) spikes past `tension_high * collision_tension_multiplier`, **softening** is increased (capped by `collision_softening_cap`) to blunt pathological close approaches.
+
+**`run_simulation(..., step_callback=...)`** — optional per-step hook `(t, tau_smooth, dt_next, energy)` for streaming telemetry into a meta-optimizer (`StepCallback` type in `threebody.core`).
 
 ---
 
@@ -16,7 +29,7 @@
 - **Pythagorean three-body** (`pythagorean_three_body`): masses **3:4:5** on a right triangle, COM frame — see **`run_pythagorean_demo.py`** for the **`t = 50`** run (close approaches, chaotic scattering; this is where tension-adaptive \(\Delta t\) shows its strength).
 - **Live diagnostics:** trajectory plot; **relative energy drift** and **tension** vs time; adaptive \(\Delta t\) series (`plot_energy_tension`).
 - **Figure-8 animation:** moving markers and short trails (`animate_figure8_trajectory` in `threebody.visualize`).
-- **Typed, documented Python** under `src/threebody/`.
+- **Typed, documented Python** under `src/threebody/` — package root documents public IC helpers: **`chenciner_montgomery_figure8`**, **`pythagorean_three_body`**.
 
 ---
 
@@ -110,6 +123,7 @@ Edit the **`TENSION_EMA_ALPHA`** line at the top of the script for a one-knob EM
 from threebody import (
     DEFAULT_TENSION_EMA_ALPHA,
     SimulationConfig,
+    StepCallback,
     benchmark_figure8_ts_config,
     chenciner_montgomery_figure8,
     pythagorean_three_body,
@@ -121,7 +135,13 @@ from threebody import (
 
 pos0, vel0, masses = chenciner_montgomery_figure8(gravitational_constant=1.0, mass=1.0)
 cfg = benchmark_figure8_ts_config(gravitational_constant=1.0)
-result = run_simulation(pos0, vel0, masses, cfg, store_stride=2)
+
+def telemetry(t: float, tau: float, dt: float, energy: float) -> None:
+    pass  # stream (t, τ, Δt, E) to a meta-optimizer
+
+result = run_simulation(
+    pos0, vel0, masses, cfg, store_stride=2, step_callback=telemetry
+)
 plot_trajectories(result, title="Figure-8")
 plot_energy_tension(result, title="Live energy & smoothed tension")
 animate_figure8_trajectory(result, title="Figure-8 animation", show=True)
@@ -155,7 +175,7 @@ animate_figure8_trajectory(result, title="Figure-8 animation", show=True)
 
 ## Future integration ideas (GOAT-TS + 3b_solution)
 
-- Stream **\(\tau(t)\)** and energy residuals into a meta-optimizer as **telemetry**.
+- Use **`step_callback`** (built-in) or post-process **`SimulationResult`** to feed **\(\tau(t)\)** and energy into a meta-optimizer.
 - Replace the force layer while keeping the **same tension feedback shell**.
 - Alternate tension functionals from symbolic GOAT-TS nodes; keep this repo as the **executable reference**.
 
