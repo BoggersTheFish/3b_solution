@@ -9,20 +9,24 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from threebody.core import (
+    DEFAULT_TENSION_EMA_ALPHA,
     SimulationConfig,
     SimulationResult,
     benchmark_figure8_ts_config,
     chenciner_montgomery_figure8,
     gravitational_acceleration,
+    pythagorean_three_body,
     run_simulation,
     total_energy,
 )
 
 __all__ = [
+    "DEFAULT_TENSION_EMA_ALPHA",
     "SimulationConfig",
     "SimulationResult",
     "benchmark_figure8_ts_config",
     "chenciner_montgomery_figure8",
+    "pythagorean_three_body",
     "gravitational_acceleration",
     "run_simulation",
     "total_energy",

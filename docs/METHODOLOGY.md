@@ -20,11 +20,15 @@ Lessons carried over from symplectic pendulum integrators and tension-adaptive e
 
 1. **Symplectic spine first** — Keep **Störmer–Verlet / kick–drift–kick** as the deterministic map for a single step. For **fixed** \(\Delta t\) and separable \(H = T(p) + V(q)\), this is the right symplectic split.
 
-2. **Smooth the policy signal** — Raw per-step tension can oscillate and cause **\(\Delta t\) chatter**. An **EMA** on \(\tau\) (see `tension_ema_alpha` in `SimulationConfig`) stabilizes the adaptation loop while preserving responsiveness to real stiffness.
+2. **Smooth the policy signal** — Raw per-step tension can oscillate and cause **\(\Delta t\) chatter**. An **EMA** on \(\tau\) (see `tension_ema_alpha` in `SimulationConfig`, default **`DEFAULT_TENSION_EMA_ALPHA`**) stabilizes the adaptation loop while preserving responsiveness to real stiffness. Demos expose a **one-line** override for quick sweeps.
 
 3. **Keep \(\Delta t\) bounds honest** — Variable-\(\Delta t\) leapfrog is **not** globally symplectic. Moderate `dt_max` and conservative shrink/grow preserve energy drift on the scale of the **latest benchmarks** (TS row in the README).
 
 4. **Validate on a non-negotiable orbit** — The **Chenciner–Montgomery figure-8** anchors the design: shape, period scale, and energy drift must remain credible under the tension policy.
+
+5. **Vectorized forces** — Pairwise gravity and potential energy use **NumPy broadcasting** over the \(N \times N\) separation matrix (same \(O(N^2)\) complexity, better constant factor for \(N > 3\); optional SciPy `cdist` is a drop-in for distance only if you fork for larger \(N\)).
+
+6. **Pythagorean stress test** — The **3:4:5** triangle mass ratio at rest (**`pythagorean_three_body`**, integrated to **`t = 50`** in `run_pythagorean_demo.py`) exposes repeated close approaches; tension-adaptive \(\Delta t\) is the “showcase” run compared to the calm figure-8 period.
 
 ## Evolution narrative (meta-waves)
 
@@ -37,6 +41,8 @@ Lessons carried over from symplectic pendulum integrators and tension-adaptive e
 4. **Benchmark wave** — Compare against a **high-order ODE baseline** (DOP853 via SciPy in an external run): same ICs, same time span. Reported results (README): **TS** — 13.49 s, **5.95×10⁻⁸** energy drift; **DOP853** — 0.156 s, **6.63×10⁻⁹** drift. DOP853 is **not** a dependency of this repository; it is a **reference** for speed/precision of a black-box integrator on the identical problem.
 
 5. **Presentation wave** — Live **energy + tension** plots and a **figure-8 animation** (`animate_figure8_trajectory`) make \(\tau\) and trajectories inspectable — aligned with GOAT-TS “discoverability” goals.
+
+6. **Publication-ready outline** — `docs/arxiv_note.md` sketches a short **arXiv-style** note (figures already ship in-repo).
 
 ## What this is (and is not)
 

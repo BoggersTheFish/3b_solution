@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -24,10 +25,14 @@ if str(_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src"))
 
 from threebody.core import (
+    DEFAULT_TENSION_EMA_ALPHA,
     benchmark_figure8_ts_config,
     chenciner_montgomery_figure8,
     run_simulation,
 )
+
+# --- optional one-line tunable (override preset EMA if you change this) ---
+TENSION_EMA_ALPHA = DEFAULT_TENSION_EMA_ALPHA
 from threebody.visualize import animate_figure8_trajectory, plot_energy_tension, plot_trajectories
 
 
@@ -43,7 +48,10 @@ def main() -> None:
     args = parser.parse_args()
 
     g = 1.0
-    config = benchmark_figure8_ts_config(gravitational_constant=g)
+    config = replace(
+        benchmark_figure8_ts_config(gravitational_constant=g),
+        tension_ema_alpha=TENSION_EMA_ALPHA,
+    )
     pos0, vel0, masses = chenciner_montgomery_figure8(gravitational_constant=g, mass=1.0)
 
     result = run_simulation(pos0, vel0, masses, config, store_stride=2)

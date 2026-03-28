@@ -25,7 +25,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 Float64 = np.float64
-Vec2 = NDArray[np.float64]  # shape (3, 2)
+Vec2 = NDArray[np.float64]  # shape (n_bodies, 2); typically n=3 in this repo
+
+# Single primary knob for tension smoothing (override per run via SimulationConfig.tension_ema_alpha).
+DEFAULT_TENSION_EMA_ALPHA: float = 0.35
 
 
 def gravitational_acceleration(
@@ -37,22 +40,22 @@ def gravitational_acceleration(
     """
     Pairwise Newtonian gravity in 2D with optional softening ε² in the denominator.
 
+    Vectorized ``O(n²)`` broadcast form (same complexity, better constant factor for
+    ``n > 3``; SciPy ``cdist`` is optional and not required).
+
     a_i = G * Σ_{j≠i} m_j * (r_j - r_i) / (|r_ij|² + ε²)^(3/2)
     """
-    n = positions.shape[0]
-    acc = np.zeros_like(positions, dtype=np.float64)
+    pos = np.asarray(positions, dtype=np.float64)
+    m = np.asarray(masses, dtype=np.float64)
+    n = pos.shape[0]
     g = float(gravitational_constant)
     eps2 = float(softening) ** 2
-
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                continue
-            rij = positions[j] - positions[i]
-            dist2 = float(np.dot(rij, rij)) + eps2
-            inv_r3 = dist2 ** (-1.5)
-            acc[i] += g * masses[j] * rij * inv_r3
-    return acc
+    # diff[i, j] = r_j - r_i
+    diff = pos[np.newaxis, :, :] - pos[:, np.newaxis, :]
+    dist2 = np.sum(diff**2, axis=2) + eps2
+    np.fill_diagonal(dist2, np.inf)
+    inv_r3 = dist2 ** (-1.5)
+    return g * np.sum(m[np.newaxis, :, np.newaxis] * diff * inv_r3[:, :, np.newaxis], axis=1)
 
 
 def total_energy(
@@ -63,16 +66,17 @@ def total_energy(
     softening: float = 0.0,
 ) -> float:
     """Total mechanical energy E = T + U for pairwise gravity in 2D."""
-    ke = 0.5 * float(np.sum(masses[:, np.newaxis] * velocities**2))
-    pe = 0.0
-    n = positions.shape[0]
+    pos = np.asarray(positions, dtype=np.float64)
+    vel = np.asarray(velocities, dtype=np.float64)
+    m = np.asarray(masses, dtype=np.float64)
+    n = pos.shape[0]
     g = float(gravitational_constant)
     eps2 = float(softening) ** 2
-    for i in range(n):
-        for j in range(i + 1, n):
-            rij = positions[j] - positions[i]
-            dist = np.sqrt(float(np.dot(rij, rij)) + eps2)
-            pe -= g * masses[i] * masses[j] / dist
+    ke = 0.5 * float(np.sum(m[:, np.newaxis] * vel**2))
+    i, j = np.triu_indices(n, k=1)
+    rij = pos[j] - pos[i]
+    dist = np.sqrt(np.sum(rij**2, axis=1) + eps2)
+    pe = -g * float(np.sum(m[i] * m[j] / dist))
     return ke + pe
 
 
@@ -139,6 +143,33 @@ def chenciner_montgomery_figure8(
     return positions, velocities, masses
 
 
+def pythagorean_three_body(
+    gravitational_constant: float = 1.0,
+) -> tuple[Vec2, Vec2, NDArray[np.float64]]:
+    """
+    Classical **Pythagorean three-body** initial data (Burrau–style setup).
+
+    Masses **3 : 4 : 5** at vertices of a right triangle, **at rest** in the
+    center-of-mass frame. With ``G = 1`` this is the standard chaotic benchmark
+    (e.g. integrate to ``t = 50`` to see repeated close approaches and rich
+    scattering). Positions are shifted so the center of mass is at the origin.
+    """
+    # Vertices of a 3–4–5 triangle (canonical coordinates, G=1).
+    q1 = np.array([1.0, 3.0], dtype=np.float64)
+    q2 = np.array([-2.0, -1.0], dtype=np.float64)
+    q3 = np.array([1.0, -1.0], dtype=np.float64)
+    masses = np.array([3.0, 4.0, 5.0], dtype=np.float64)
+    positions = np.stack([q1, q2, q3], axis=0)
+    com = np.sum(masses[:, np.newaxis] * positions, axis=0) / np.sum(masses)
+    positions = positions - com
+    velocities = np.zeros_like(positions, dtype=np.float64)
+    if gravitational_constant != 1.0:
+        # Scale time/velocity so that G enters consistently (same as equal-mass scaling idea).
+        scale_v = np.sqrt(float(gravitational_constant))
+        velocities = velocities * scale_v
+    return positions, velocities, masses
+
+
 def benchmark_figure8_ts_config(
     gravitational_constant: float = 1.0,
 ) -> SimulationConfig:
@@ -160,7 +191,7 @@ def benchmark_figure8_ts_config(
         tension_low=0.0005,
         shrink_factor=0.62,
         grow_factor=1.03,
-        tension_ema_alpha=0.35,
+        tension_ema_alpha=DEFAULT_TENSION_EMA_ALPHA,
         w_energy=1.0,
         w_force=0.5,
     )
@@ -194,7 +225,7 @@ class SimulationResult:
     """Time series from a completed run."""
 
     times: NDArray[np.float64]
-    positions: NDArray[np.float64]  # (T, 3, 2)
+    positions: NDArray[np.float64]  # (T, n_bodies, 2)
     energies: NDArray[np.float64]
     tensions: NDArray[np.float64]
     dt_series: NDArray[np.float64]

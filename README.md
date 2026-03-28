@@ -4,15 +4,16 @@
 
 *Nodes* = bodies + integrator stages; *edges* = gravitational constraints; *waves* = time steps; *tension* = energy drift + force imbalance; *break/evolve* = adaptive \(\Delta t\) from smoothed \(\tau\).
 
-**Dependencies:** **NumPy + Matplotlib only** in this repo — no SciPy/JAX — so physics and policy stay transparent and easy to embed in GOAT-TS pipelines.
+**Dependencies:** **NumPy + Matplotlib only** in this repo — no SciPy/JAX — so physics and policy stay transparent and easy to embed in GOAT-TS pipelines. Pairwise gravity is **vectorized** (broadcast \(O(N^2)\) accelerations); for \(N \gg 3\) you could also plug in `scipy.spatial.distance` in a fork — not required here.
 
 ---
 
 ## What you get
 
 - **Symplectic leapfrog** backbone (half-kick / drift / half-kick); fixed \(\Delta t\) would be exactly symplectic for separable \(H = T + V\); variable \(\Delta t\) is handled with **smooth** tension feedback.
-- **EMA-smoothed tension** \(\tau\) (configurable `tension_ema_alpha`): shrink/grow decisions use smoothed \(\tau\), not raw single-step noise.
+- **EMA-smoothed tension** \(\tau\): one primary knob **`tension_ema_alpha`** (module default **`DEFAULT_TENSION_EMA_ALPHA`**, typically `0.35`). Set in `SimulationConfig` or the one-line override at the top of each demo. \(\alpha=0\) uses raw \(\tau\) each step; higher \(\alpha\) smooths the adaptation signal (pendulum-stack polish).
 - **Chenciner–Montgomery figure-8** initial conditions (exact classical values, scaled for arbitrary \(G\) and equal masses).
+- **Pythagorean three-body** (`pythagorean_three_body`): masses **3:4:5** on a right triangle, COM frame — see **`run_pythagorean_demo.py`** for the **`t = 50`** run (close approaches, chaotic scattering; this is where tension-adaptive \(\Delta t\) shows its strength).
 - **Live diagnostics:** trajectory plot; **relative energy drift** and **tension** vs time; adaptive \(\Delta t\) series (`plot_energy_tension`).
 - **Figure-8 animation:** moving markers and short trails (`animate_figure8_trajectory` in `threebody.visualize`).
 - **Typed, documented Python** under `src/threebody/`.
@@ -45,6 +46,8 @@ Three point masses move in the plane under mutual Newtonian gravity. There is **
 ## GOAT-TS meta-wave process
 
 The full narrative — mapping nodes/edges/waves/tension/break–evolve, pendulum polish, and the TS vs DOP853 baseline — is in **[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md)**.
+
+A short **arXiv-style** draft outline (figures in-repo are publication-ready) lives in **[`docs/arxiv_note.md`](docs/arxiv_note.md)** — suitable to expand into a ~2-page workshop note with a pointer to this repository.
 
 ---
 
@@ -89,6 +92,14 @@ PYTHONPATH=src python examples/figure8_demo.py --save figure8_orbit.gif
 PYTHONPATH=src python examples/general_3body_demo.py
 ```
 
+**Pythagorean three-body (`t = 50`)** — stress test for tension-driven \(\Delta t\)
+
+```bash
+PYTHONPATH=src python examples/run_pythagorean_demo.py
+```
+
+Edit the **`TENSION_EMA_ALPHA`** line at the top of the script for a one-knob EMA sweep.
+
 > **Headless / Agg:** interactive windows may be unavailable. Pass `--save` for the figure-8 animation, or use a GUI backend. Static plots support `save_path=...` on the plotting functions.
 
 ---
@@ -97,9 +108,11 @@ PYTHONPATH=src python examples/general_3body_demo.py
 
 ```python
 from threebody import (
+    DEFAULT_TENSION_EMA_ALPHA,
     SimulationConfig,
     benchmark_figure8_ts_config,
     chenciner_montgomery_figure8,
+    pythagorean_three_body,
     run_simulation,
     plot_trajectories,
     plot_energy_tension,
@@ -131,9 +144,11 @@ animate_figure8_trajectory(result, title="Figure-8 animation", show=True)
 │   └── py.typed
 ├── examples/
 │   ├── figure8_demo.py
-│   └── general_3body_demo.py
+│   ├── general_3body_demo.py
+│   └── run_pythagorean_demo.py
 └── docs/
-    └── METHODOLOGY.md
+    ├── METHODOLOGY.md
+    └── arxiv_note.md
 ```
 
 ---
